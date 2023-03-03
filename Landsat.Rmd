@@ -1,0 +1,351 @@
+---
+title: "Landsat"
+author: "Masuzyo Mwanza, Rachel Wang"
+date: "4/2/2020"
+output:
+  github_document: default
+  word_document: default
+  pdf_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r,include=FALSE}
+library(GGally)
+source("ggbiplot.r")
+source("ggscreeplot.r")
+#source("CNN.R")
+library(tidyverse)
+library(factoextra)
+library(randomForest)
+library(MVN)
+library(MASS)
+library(e1071)
+library(tensorflow)
+library(keras)
+library(magrittr)
+library(mvoutlier)
+```
+# EDA
+
+```{r}
+set.seed(260)
+train <- read.table("sat.trn",sep = " ")
+```
+
+
+```{r}
+test <- read.table("sat.tst",sep=" ")
+```
+
+
+```{r}
+ggpairs(train[,1:9])
+ggpairs(train[,10:18])
+ggpairs(train[,19:27])
+ggpairs(train[,27:36])
+```
+
+
+```{r}
+pic.tr <-as.data.frame(train[,1:36])
+pic.ts <- as.data.frame(test[,1:36])
+res <- as.factor(train[,37])
+res1 <- as.factor(test[,37])
+```
+test normality with groups
+```{r}
+train1 <- cbind(pic.tr,res)
+mvn(train1,subset="res",multivariatePlot = "qq")
+``` 
+```{r}
+for(i in c(1:5,7))
+{
+  out<-train1 %>% filter(res==i)
+  aq.plot(out[,-37])
+}
+```
+
+test for difference between groups
+```{r}
+m1 <- manova(as.matrix(pic.tr)~res)
+summary(m1)
+```
+
+New y
+```{r}
+res2 <- res3 <- NA
+for(i in 1:length(res))
+{
+ if (res[i] %in% c(3,4,7)){res2[i]=3}else{res2[i]=res[i]} 
+}
+for(i in 1:length(res1))
+{
+ if (res1[i] %in% c(3,4,7)){res3[i]=3}else{res3[i]=res1[i]} 
+}
+res2<-as.factor(res2)
+res3<-as.factor(res3)
+```
+
+## PCA
+```{r}
+pc<-prcomp(pic.tr,scale. = F)
+ggbiplot(pc,groups = res)+theme_bw()
+ggscreeplot(pc,type = 'cev')+theme_bw()
+pca.z<-as.data.frame(pc$x[,1:5])
+R<-pc$rotation[,1:5]
+pca.ts <-as.data.frame(as.matrix(scale(pic.ts,scale = F))%*%R)
+```
+# Methods on Orginal DataSet
+
+## LDA
+
+```{r}
+
+la<-MASS::lda(res~.,pic.tr)
+la.pred=predict(la, pic.ts)
+```
+Confusion Matrix
+```{r}
+table(lda.class=la.pred$class ,res1)
+1-mean(la.pred$class==res1)
+```
+
+## LDA with PCA 
+
+```{r}
+la1<-MASS::lda(res~.,pca.z)
+la1.pred=predict(la1,pca.ts)
+```
+Confusion Matrix
+```{r}
+table(lda.class=la1.pred$class ,res1)
+1-mean(la1.pred$class==res1)
+```
+
+## Random Forest
+
+```{r}
+rf <- randomForest::randomForest(res~.,pic.tr,mtry=20,importance=TRUE)
+rf.pred=predict(rf,pic.ts)
+```
+Confusion Matrix
+```{r}
+table(rf.pred ,res1)
+1-mean(rf.pred==res1)
+mean(rf.pred==res1)
+```
+
+## Random Forest with PCA
+
+```{r}
+rf1 <- randomForest::randomForest(res~.,pca.z,mtry=5,importance=TRUE)
+rf1.pred=predict(rf1,pca.ts)
+```
+Confusion Matrix
+```{r}
+table(rf1.pred ,res1)
+1-mean(rf1.pred==res1)
+mean(rf1.pred==res1)
+```
+
+## Support Vector Machines
+
+```{r}
+svm<-svm(res~.,pic.tr, kernel="radial",ranges=list(cost=c(0.1,1,10,100,1000),gamma=c(0.5,1,2,3,4)))
+svm.pred=predict(svm,pic.ts)
+```
+Confusion Matrix
+```{r}
+table(svm.pred ,res1)
+1-mean(svm.pred==res1)
+mean(svm.pred==res1)
+```
+## Support Vector Machines with PCA
+```{r}
+svm1<-svm(res~.,pca.z, kernel="radial",ranges=list(cost=c(0.1,1,10,100,1000),gamma=c(0.5,1,2,3,4)))
+svm1.pred=predict(svm1,pca.ts)
+```
+Confusion Matrix
+```{r}
+table(svm1.pred ,res1)
+1-mean(svm1.pred==res1)
+mean(svm1.pred==res1)
+```
+```{r}
+km<-kmeans(pic.tr, centers = 6, nstart = 25)
+fviz_cluster(km, data = pic.tr)+theme_bw()
+```
+```{r}
+err<-NA
+pc<-prcomp(pic.tr,scale. = F)
+for(i in 2:36)
+{
+  
+  pca.z<-as.data.frame(pc$x)
+  pca.i<-pca.z[,1:i]
+  R<-pc$rotation[,1:i]
+  pca.ts <-as.data.frame(as.matrix(scale(pic.ts,scale = F))%*%R)
+  rf1 <- randomForest::randomForest(res~.,pca.i,mtry=i,importance=TRUE)
+  rf1.pred=predict(rf1,pca.ts)
+  err[i-1]<-1-mean(rf1.pred==res1)
+  print(i)
+}
+p=which.min(err)
+```
+
+```{r}
+
+  pca.p<-pca.z[,1:p]
+  R<-pc$rotation[,1:p]
+  pca.ts <-as.data.frame(as.matrix(scale(pic.ts,scale = F))%*%R)
+  rfp <- randomForest::randomForest(res~.,pca.p,mtry=p,importance=TRUE)
+  rfp.pred=predict(rfp,pca.ts)
+  1-mean(rfp.pred==res1)
+  mean(rfp.pred==res1)
+
+```
+
+```{r}
+set<-as.data.frame(cbind(k=2:36,err))
+sp<-ggplot(set,aes(x=k,y=err))+geom_line()+labs(x="No. of Components",y="Error")+geom_hline(yintercept=0.092,linetype="dashed", color = "red")+theme_bw()
+sp
+```
+
+# New Y
+
+# Stage I
+
+```{r}
+ggbiplot(pc,groups = res2)+theme_bw() 
+```
+
+## LDA 
+
+```{r}
+
+la<-MASS::lda(res2~.,pic.tr)
+la.pred=predict(la, pic.ts)
+```
+Confusion Matrix
+```{r}
+table(lda.class=la.pred$class ,res3)
+1-mean(la.pred$class==res3)
+mean(la.pred$class==res3)
+```
+
+## Random Forest
+
+```{r}
+rf <- randomForest::randomForest(res2~.,pic.tr,mtry=20,importance=TRUE)
+rf.pred=predict(rf,pic.ts)
+```
+Confusion Matrix
+```{r}
+table(rf.pred ,res3)
+1-mean(rf.pred==res3)
+mean(rf.pred==res3)
+```
+
+## Support Vector Machines
+
+```{r}
+svm<-svm(res2~.,pic.tr, kernel="radial",ranges=list(cost=c(0.1,1,10,100,1000),gamma=c(0.5,1,2,3,4)))
+svm.pred=predict(svm,pic.ts)
+```
+Confusion Matrix
+```{r}
+table(svm.pred ,res3)
+1-mean(svm.pred==res3)
+mean(svm.pred==res3)
+```
+
+# Stage II
+
+```{r}
+gry.tr<-train%>%filter(V37%in% c(3,4,7))
+gry.ts<-test%>%filter(rf.pred==res3&res3==3)
+```
+## LDA 
+
+```{r}
+
+la<-MASS::lda(V37~.,gry.tr)
+la.pred=predict(la, gry.ts[,-37])
+```
+Confusion Matrix
+```{r}
+table(lda.class=la.pred$class ,gry.ts[,37])
+1-mean(la.pred$class==gry.ts[,37])
+mean(la.pred$class==gry.ts[,37])
+```
+
+## Random Forest
+
+```{r}
+rf <- randomForest(as.factor(V37)~.,gry.tr)
+rf.pred=predict(rf,gry.ts[,-37])
+```
+Confusion Matrix
+```{r}
+table(rf.pred ,gry.ts[,37])
+1-mean(rf.pred==gry.ts[,37])
+mean(rf.pred==gry.ts[,37])
+```
+
+## Support Vector Machines
+
+```{r}
+svm<-svm(as.factor(V37)~.,gry.tr, kernel="radial",ranges=list(cost=c(0.1,1,10,100,1000),gamma=c(0.5,1,2,3,4)))
+svm.pred=predict(svm,gry.ts[,-37])
+```
+Confusion Matrix
+```{r}
+table(svm.pred ,gry.ts[,37])
+1-mean(svm.pred==gry.ts[,37])
+mean(svm.pred==gry.ts[,37])
+```
+
+
+```{r eval=FALSE, include=FALSE}
+model <- keras_model_sequential() 
+model %>% 
+  layer_dense(units = 24, activation = "relu", input_shape = c(36)) %>% 
+  layer_dropout(rate = 0.4) %>% 
+  layer_dense(units = 12, activation = "relu") %>%
+  layer_dropout(rate = 0.3) %>%
+  layer_dense(units = 6, activation = "softmax")
+#`train_array 
+#layer_dropout(rate = 0.25) %>%
+#layer_flatten() %>%
+#layer_dense(units = 50, activation = "relu") %>%
+#layer_dropout(rate = 0.25) %>%
+#layer_dense(units = 1, activation = "sigmoid")
+ 
+summary(model)
+ 
+ model %>% compile(
+   loss = "categorical_crossentropy",
+  optimizer = optimizer_rmsprop(),
+  metrics = c("accuracy")
+) 
+#model %>% compile(
+#loss = 'binary_crossentropy',
+#optimizer = "adam",
+#metrics = c('accuracy')
+#)
+
+cnx<-pic.tr/255
+cny<-to_categorical(as.numeric(res)-1,6)
+  
+history <- model %>% fit(
+x = cnx, y = cny,
+epochs = 30, batch_size = 100,
+validation_split = 0.2
+)
+ 
+plot(history)
+```
+
